@@ -18,6 +18,7 @@
 *.zip
 *.tar.gz
 *.rar
+dependency-reduced-pom.xml
 
 # Virtual machine crash logs
 hs_err_pid*
