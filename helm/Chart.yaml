@@ -1,0 +1,5 @@
+---
+name: cap-pathology-receiver
+version: 1.0.0-SNAPSHOT
+description: Ingress to receive HL7 messages from capion pathology
+icon: img/icons/camel.svg

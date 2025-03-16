@@ -1,2 +1,2 @@
 # cap-pathology-mllp
-feature/send-receive-messages
+A Java microservice ingress for receiving HL7 messages from the fictional Cap Pathology lab via MLLP in the Digital Twin ecosystem. Built with HAPI, this module listens on a configurable port (default 8888), sends ACKs to the lab, and publishes messages to Kafka for downstream processing by twin-routes. Designed as a standalone service, it serves as a vendor-specific entry point for real-time healthcare event streaming.
