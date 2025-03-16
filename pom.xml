@@ -8,31 +8,54 @@
         <relativePath>../digital-twin</relativePath>
     </parent>
     <artifactId>cap-pathology-mllp</artifactId>
-    <name>Cap Pathology MLLP</name>
-    <description>Ingress for Cap Pathology HL7 messages via MLLP</description>
+    <name>Capion Pathology MLLP</name>
+    <description>Ingress for Cap Pathology HL7 messages via MLLP using Apache Camel</description>
 
     <dependencies>
-	    <dependency>
-	        <groupId>ca.uhn.hapi</groupId>
-	        <artifactId>hapi-base</artifactId>
-	    </dependency>
-	    <dependency>
-	        <groupId>ca.uhn.hapi</groupId>
-	        <artifactId>hapi-structures-v23</artifactId>
-	    </dependency>
-	    <dependency>
-	        <groupId>org.apache.kafka</groupId>
-	        <artifactId>kafka-clients</artifactId>
-	    </dependency>
-	    <dependency>
-	        <groupId>org.slf4j</groupId>
-	        <artifactId>slf4j-api</artifactId>
-	    </dependency>
-	    <dependency>
-	        <groupId>ch.qos.logback</groupId>
-	        <artifactId>logback-classic</artifactId>
-	    </dependency>
-	</dependencies>
+        <!-- Camel Core -->
+        <dependency>
+            <groupId>org.apache.camel</groupId>
+            <artifactId>camel-core</artifactId>
+        </dependency>
+        <!-- Camel MLLP for HL7 ingress -->
+        <dependency>
+            <groupId>org.apache.camel</groupId>
+            <artifactId>camel-mllp</artifactId>
+        </dependency>
+        <!-- Camel HL7 for parsing/generating ACKs -->
+        <dependency>
+            <groupId>org.apache.camel</groupId>
+            <artifactId>camel-hl7</artifactId>
+        </dependency>
+        <!-- Camel Kafka for sending messages and ACKs -->
+        <dependency>
+            <groupId>org.apache.camel</groupId>
+            <artifactId>camel-kafka</artifactId>
+        </dependency>
+        <!-- Kafka Clients (for SSL config) -->
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+        </dependency>
+        <!-- HAPI -->
+        <dependency>
+            <groupId>ca.uhn.hapi</groupId>
+            <artifactId>hapi-base</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ca.uhn.hapi</groupId>
+            <artifactId>hapi-structures-v24</artifactId>
+        </dependency>
+        <!-- Logging -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+        </dependency>
+    </dependencies>
 
     <build>
         <plugins>
@@ -54,6 +77,10 @@
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
             </plugin>
         </plugins>
     </build>
