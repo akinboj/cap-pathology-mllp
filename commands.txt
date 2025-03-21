@@ -1,4 +1,6 @@
 # Build and Deploy::
+mvn clean install -DskipTests
+
 docker build --rm --build-arg IMAGE_BUILD_TIMESTAMP="$(date '+%Y-%m-%d %H:%M:%S')" -t curis-capion-pathology:1.0.0-snapshot --file Dockerfile .
 
 helm upgrade curis-capion-pathology-site-a --install --namespace site-a --set serviceName=curis-capion-pathology,imagePullPolicy=Never,hostPathCerts=/Users/yemie/dev/curis-secrets,basePort=31006,imageTag=1.0.0-snapshot,numOfPods=1 helm

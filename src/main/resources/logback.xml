@@ -1,13 +1,24 @@
 <configuration>
+    <!-- Console Appender -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>INFO</level>
+        </filter>
     </appender>
 
+    <!-- Apply Kafka disconnection log suppression -->
+    <turboFilter class="net.healthcare.digitaltwin.capmllp.KafkaThrottleFilter"/>
+
+    <!-- Ensure HL7 logs are NOT throttled -->
     <logger name="net.healthcare.digitaltwin.capmllp" level="INFO"/>
-    <logger name="org.apache.kafka" level="WARN"/>
     <logger name="ca.uhn.hl7v2" level="INFO"/>
+
+    <!-- Keep Kafka logs at WARN but limit disconnection spam -->
+    <logger name="org.apache.kafka" level="WARN"/>
+    <logger name="org.apache.kafka.clients.NetworkClient" level="WARN"/>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>

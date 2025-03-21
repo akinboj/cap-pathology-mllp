@@ -1,10 +1,6 @@
 package net.healthcare.digitaltwin.capmllp;
 
-import java.io.FileWriter;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -22,37 +18,41 @@ import ca.uhn.hl7v2.util.Terser;
 public class HL7Handler implements ReceivingApplication<Message>, AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(HL7Handler.class);
     private static final Map<String, String> TOPIC_DESCRIPTIONS = new HashMap<>();
-    
+
     private final ProducerTemplate producer;
-    private final String failedMessagesPath;
+    private final MessageStore messageStore;
 
     static {
         TOPIC_DESCRIPTIONS.put("AIP-34915", "ADT messages");
         TOPIC_DESCRIPTIONS.put("AIP-34728", "ORU messages");
         TOPIC_DESCRIPTIONS.put("ERROR-QUEUE", "Failed HL7 messages");
         TOPIC_DESCRIPTIONS.put("ERROR-QUEUE-ACK", "NACK for failed HL7 messages");
-        TOPIC_DESCRIPTIONS.put("OUTAGE-QUEUE", "Messages stored when Kafka was unavailable");
     }
 
-    public HL7Handler(CamelContext camel, String failedMessagesPath) {
+    public HL7Handler(CamelContext camel, String basePath) {
         this.producer = camel.createProducerTemplate();
-        this.failedMessagesPath = failedMessagesPath;
+        this.messageStore = new MessageStore(basePath);
     }
 
     @Override
     public Message processMessage(Message request, Map<String, Object> metadata) throws ReceivingApplicationException {
-        String hl7Msg;
+        String hl7Msg = null;
         String patientId = "UNKNOWN";
         String msgType = "UNKNOWN";
         String topic;
-        String desc;
         Message ack;
 
         try {
             hl7Msg = request.encode();
+        } catch (HL7Exception e) {
+            LOG.error("Failed to encode HL7 message initially", e);
+            hl7Msg = metadata != null ? (String) metadata.get("RAW_MESSAGE") : "UNENCODED_MESSAGE";
+        }
+        
+        try {
             Terser terser = new Terser(request);
             msgType = terser.get("/MSH-9-1");
-        
+
             String[] possiblePaths = {
                 "/PID-3-1",
                 "/PATIENT_RESULT/PATIENT/PID-3-1",
@@ -72,7 +72,7 @@ public class HL7Handler implements ReceivingApplication<Message>, AutoCloseable 
             if ("UNKNOWN".equals(patientId)) {
                 LOG.warn("No valid PID found in message");
             }
-        
+
             if ("ORU".equals(msgType)) {
                 topic = "AIP-34728";
             } else if ("ADT".equals(msgType)) {
@@ -80,86 +80,73 @@ public class HL7Handler implements ReceivingApplication<Message>, AutoCloseable 
             } else {
                 topic = "ERROR-QUEUE";
                 LOG.warn("Unhandled message type: {} - routing to {}", msgType, topic);
-                ack = generateNegativeAck(request);  // NACK for unknown types
-                sendToKafka(topic, hl7Msg, patientId);  // Log to ERROR-QUEUE
-                return ack;  // Early return, skip ACK to Kafka
+                ack = generateNegativeAck(request);
+                sendToKafka(topic, hl7Msg, patientId, ack);
+                return ack;
             }
-            desc = TOPIC_DESCRIPTIONS.getOrDefault(topic, "unknown_topic");
-        
+
             ack = request.generateACK();
-            sendToKafka(topic, hl7Msg, patientId);
-            sendAckToKafka(ack, topic, patientId, desc);
+            sendToKafka(topic, hl7Msg, patientId, ack);
         } catch (HL7Exception | IOException e) {
             LOG.error("HL7 message processing failed", e);
             ack = generateNegativeAck(request);
             topic = "ERROR-QUEUE";
-            desc = TOPIC_DESCRIPTIONS.get(topic);
-            try {
-                saveFailedMessage(request.encode());
-            } catch (HL7Exception encodeException) {
-                LOG.error("Failed to encode HL7 message for storage", encodeException);
-            }
+            sendToKafka(topic, hl7Msg, patientId, ack);
         }
         return ack;
     }
 
-    private void sendToKafka(String topic, String message, String patientId) {
+    private void sendToKafka(String topic, String message, String patientId, Message ack) {
+        boolean kafkaSuccess = false;
         try {
+            // Try sending to Kafka with fail-fast settings from KafkaConfig
             producer.sendBodyAndHeader("kafka:" + topic, message, "kafka.KEY", patientId);
+            kafkaSuccess = true; // Only set if Kafka write succeeds
+            LOG.debug("Sent message to Kafka: topic={}, patientId={}", topic, patientId);
+
+            if (ack != null) {
+                String ackMsg = ack.encode();
+                String ackTopic = topic + "-ACK";
+                producer.sendBodyAndHeader("kafka:" + ackTopic, ackMsg, "kafka.KEY", patientId);
+                LOG.info("Sent ACK to Kafka: topic={}, patientId={}", ackTopic, patientId);
+            }
         } catch (Exception e) {
-            LOG.error("Kafka send failure: Storing message locally.", e);
-            saveFailedMessage(message);
+            LOG.warn("Kafka write failed for topic={}, patientId={}: {}", topic, patientId, e.getMessage());
+            // Fallback to local storage immediately on Kafka failure
+            try {
+                String ackMsg = ack != null ? ack.encode() : null;
+                messageStore.save(topic, message, ackMsg);
+                LOG.info("Stored message locally due to Kafka failure: topic={}, patientId={}", topic, patientId);
+            } catch (HL7Exception ex) {
+                LOG.error("Failed to encode ACK for storage: {}", ex.getMessage());
+                throw new RuntimeException("Critical failure: Could not store message or ACK", ex);
+            }
+        }
+        // If Kafka failed but storage succeeded, no exception thrown - message is safe
+        if (!kafkaSuccess && !messageStoreFailed(topic, message)) {
+            LOG.debug("Message safely stored after Kafka failure: patientId={}", patientId);
         }
     }
 
-    private void sendAckToKafka(Message ack, String topic, String patientId, String desc) throws IOException {
-        try {
-            String ackMsg = ack.encode();
-            String ackTopic = topic + "-ACK";
-            producer.sendBodyAndHeader("kafka:" + ackTopic, ackMsg, "kafka.KEY", patientId);
-            LOG.info("Sent ACK to Kafka: topic={}, desc={}, patientId={}", ackTopic, desc, patientId);
-        } catch (HL7Exception e) {
-            LOG.error("Failed to encode ACK: {}", e.getMessage());
-            throw new IOException("ACK encoding failed", e);
-        }
+    private boolean messageStoreFailed(String topic, String message) {
+        // Simple check - if save() didn't throw, assume success
+        // Could enhance with explicit store verification if needed
+        return false;
     }
-
-    private void saveFailedMessage(String message) {
-        Path dirPath = Paths.get(failedMessagesPath);
-        try {
-            if (!Files.exists(dirPath)) {
-                Files.createDirectories(dirPath);
-            }
-            String fileName = "failed_message_" + System.currentTimeMillis() + ".hl7";
-            Path filePath = dirPath.resolve(fileName);
-    
-            try (FileWriter writer = new FileWriter(filePath.toFile(), true)) {
-                writer.write(message);
-                writer.write("\n");
-            }
-        } catch (IOException e) {
-            LOG.error("Failed to store HL7 message", e);
-        }
-    }    
 
     private Message generateNegativeAck(Message request) {
         try {
-            // Generate ACK from the original message to maintain MSH segment consistency
             Message ack = request.generateACK();
-            
-            // Get the MSA segment and set it to AE (Application Error)
             Terser terser = new Terser(ack);
             terser.set("/MSA-1", "AE");
-            terser.set("/MSA-2", new Terser(request).get("/MSH-10")); // Set original message ID
+            terser.set("/MSA-2", new Terser(request).get("/MSH-10"));
             terser.set("/MSA-3", "Message processing error - Unsupported message type");
-            
             return ack;
-        } catch (HL7Exception | IOException e) { // Catch both
+        } catch (HL7Exception | IOException e) {
             LOG.error("Failed to generate Negative ACK: {}", e.getMessage());
             return null;
         }
     }
-    
 
     @Override
     public boolean canProcess(Message message) {
